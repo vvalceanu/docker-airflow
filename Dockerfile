@@ -1,15 +1,21 @@
-# VERSION 1.10.2
-# AUTHOR: Matthieu "Puckel_" Roisil
-# DESCRIPTION: Basic Airflow container
-# BUILD: docker build --rm -t puckel/docker-airflow .
-# SOURCE: https://github.com/puckel/docker-airflow
+# ORIGINAL BY: Matthieu "Puckel_" Roisil
+# ORIGINAL REPO: https://github.com/puckel/docker-airflow
+
+# VERSION 2
+# AUTHOR: Vlad Valceanu
+# DESCRIPTION: BD Airflow container
+# BUILD: docker build --rm -t bd/airflow .
+# SOURCE: https://github.com/vvalceanu/docker-airflow
 
 FROM python:3.6-slim
-LABEL maintainer="Puckel_"
+LABEL maintainer="vvalceanu"
 
 # Never prompts the user for choices on installation/configuration of packages
 ENV DEBIAN_FRONTEND noninteractive
 ENV TERM linux
+
+# To turn debug off: Set this to "" or unset it. DO NOT SET IT TO "False"!
+ARG DEBUG=True
 
 # Airflow
 ARG AIRFLOW_VERSION=1.10.2
@@ -27,6 +33,9 @@ ENV LC_MESSAGES en_US.UTF-8
 
 RUN set -ex \
     && buildDeps=' \
+        # apt-transport-https, gnupg are is required for installing Microsoft ODBC
+        apt-transport-https \
+        gnupg \
         freetds-dev \
         libkrb5-dev \
         libsasl2-dev \
@@ -45,8 +54,20 @@ RUN set -ex \
         apt-utils \
         curl \
         rsync \
-        netcat \
+        less \
         locales \
+        netcat \
+    &&  if [ -n "${DEBUG}" ]; then \
+            apt-get install -yqq --no-install-recommends \
+            mc \
+            nano \
+            procps \
+            htop; \
+        fi \
+    && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
+    && curl https://packages.microsoft.com/config/debian/9/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get --assume-yes install msodbcsql17 \
     && sed -i 's/^# en_US.UTF-8 UTF-8$/en_US.UTF-8 UTF-8/g' /etc/locale.gen \
     && locale-gen \
     && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
@@ -56,7 +77,12 @@ RUN set -ex \
     && pip install pyOpenSSL \
     && pip install ndg-httpsclient \
     && pip install pyasn1 \
-    && pip install apache-airflow[crypto,celery,postgres,hive,jdbc,mysql,ssh${AIRFLOW_DEPS:+,}${AIRFLOW_DEPS}]==${AIRFLOW_VERSION} \
+    && pip install apache-airflow[crypto,celery,postgres,hive,mysql,mssql,slack,ssh${AIRFLOW_DEPS:+,}${AIRFLOW_DEPS}]==${AIRFLOW_VERSION} \
+    && pip install python-dotenv \
+    && pip install numpy \
+    && pip install sqlalchemy \
+    && pip install slackclient \
+    && pip install boto3 \
     && pip install 'redis>=2.10.5,<3' \
     && if [ -n "${PYTHON_DEPS}" ]; then pip install ${PYTHON_DEPS}; fi \
     && apt-get purge --auto-remove -yqq $buildDeps \
@@ -68,7 +94,24 @@ RUN set -ex \
         /var/tmp/* \
         /usr/share/man \
         /usr/share/doc \
-        /usr/share/doc-base
+        /usr/share/doc-base \
+    && echo "Done!"
+
+# for anomaly detection
+RUN set -ex \
+   && pip install sklearn \
+   && pip install scipy \
+   && pip install pandas \
+   && pip install pystan \
+   && pip install fbprophet \
+   && rm -rf \
+       /var/lib/apt/lists/* \
+       /tmp/* \
+       /var/tmp/* \
+       /usr/share/man \
+       /usr/share/doc \
+       /usr/share/doc-base \
+   && echo "Done!"
 
 COPY script/entrypoint.sh /entrypoint.sh
 COPY config/airflow.cfg ${AIRFLOW_HOME}/airflow.cfg

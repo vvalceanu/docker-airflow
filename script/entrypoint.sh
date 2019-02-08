@@ -13,8 +13,27 @@ TRY_LOOP="20"
 : "${POSTGRES_DB:="airflow"}"
 
 # Defaults and back-compat
+# ${A:-B} inseamna A, sau default B (daca A nu e setat)
+# ${A:=B} inseamna "daca A nu exista, seteaza-l la valoarea lui B"
+# deci linia cu Fernet inseamna de fapt asa:
+# daca variabila AIRFLOW__CORE__FERNET_KEY nu e setata, seteaz-o la continutul
+# variabilei FERNET_KEY, si pe aia, daca nu e setata, calculeaz-o cu python -c tralala
 : "${AIRFLOW__CORE__FERNET_KEY:=${FERNET_KEY:=$(python -c "from cryptography.fernet import Fernet; FERNET_KEY = Fernet.generate_key().decode(); print(FERNET_KEY)")}}"
 : "${AIRFLOW__CORE__EXECUTOR:=${EXECUTOR:-Sequential}Executor}"
+
+# Never load DAGs exemples (default: Yes)
+AIRFLOW__CORE__LOAD_EXAMPLES=False
+
+# cate DAG-uri intregi pot fi considerate "ruland" in acelasi timp (coloane de patratele albe in Tree View)
+: ${AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG:="8"}
+
+# cate procese sa ruleze deodata pe masina aia. Presupunem ca are 4 core-uri :D
+: ${AIRFLOW__CORE__PARALLELISM:="8"}
+
+# La fiecare 30 de secunde initiaza o noua scanare a tututor dag-urilor,
+# apoi pune in coada ce taskuri crede schedulerul ca trebuie puse in coada.
+# Implicit era 0, adica while (1)
+: ${AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL:="30"}
 
 export \
   AIRFLOW__CELERY__BROKER_URL \
@@ -23,13 +42,10 @@ export \
   AIRFLOW__CORE__FERNET_KEY \
   AIRFLOW__CORE__LOAD_EXAMPLES \
   AIRFLOW__CORE__SQL_ALCHEMY_CONN \
+  AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG \
+  AIRFLOW__CORE__PARALLELISM \
+  AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL \
 
-
-# Load DAGs exemples (default: Yes)
-if [[ -z "$AIRFLOW__CORE__LOAD_EXAMPLES" && "${LOAD_EX:=n}" == n ]]
-then
-  AIRFLOW__CORE__LOAD_EXAMPLES=False
-fi
 
 # Install custom python package if requirements.txt is present
 if [ -e "/requirements.txt" ]; then
@@ -69,12 +85,14 @@ fi
 
 case "$1" in
   webserver)
+    # initdb does nothing on an already initialized database
     airflow initdb
-    if [ "$AIRFLOW__CORE__EXECUTOR" = "LocalExecutor" ]; then
-      # With the "Local" executor it should all run in one container.
-      airflow scheduler &
-    fi
     exec airflow webserver
+    ;;
+  local-scheduler)
+    # let the webserver run initdb and load
+    sleep 10
+    exec airflow scheduler
     ;;
   worker|scheduler)
     # To give the webserver time to run initdb.
